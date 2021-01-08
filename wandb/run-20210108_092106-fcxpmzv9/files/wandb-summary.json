@@ -1,1 +1,0 @@
-{"graph_0": {"_type": "graph-file", "path": "media/graph/g.r.a.p.h._.0_summary_de146579.graph.json", "sha256": "de1465791282de33a52f005ba6c7ebf683a47194a275daa83ca461ef09213e0d", "size": 2711}, "Train Accuracy": 1.0, "Test Accuracy": 1.0, "Test Loss": 0.3442141132569284, "Epoch": 0, "_step": 1, "_runtime": 3, "_timestamp": 1610094069, "Best model accuracy": 1.0}

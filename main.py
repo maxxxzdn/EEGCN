@@ -114,9 +114,9 @@ criterion = torch.nn.CrossEntropyLoss()
 # Train the model 
 train_acc = 0
 best_acc = 0
-epoch = 0
+epoch = 1
 
-while train_acc < 1:
+while train_acc < 0.99:
     loss = train(model, optimizer, criterion, train_loader, epoch, device)
     train_acc = test(model, train_loader, device)
     test_acc = test(model, test_loader, device)    
@@ -132,6 +132,8 @@ while train_acc < 1:
             torch.save(model.state_dict(), str(args.model) + '_' + str(args.exp_name) + '.pt')
     if args.epochs > 0 and epoch > args.epochs: # If countable epoch number was given:
         break 
+        
+    epoch += 1
 
 # Print best achieved result
 if args.wandb:
