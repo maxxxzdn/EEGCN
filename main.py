@@ -1,7 +1,6 @@
 import torch
 import glob
 import argparse
-import wandb
 
 import numpy as np
 
@@ -42,6 +41,8 @@ parser.add_argument('--cuda', type=bool, default=False,
                     help='Enables CUDA training')
 parser.add_argument('--horovod', type=bool, default=False,
                     help='Enables Horovod parallelism')
+parser.add_argument('--wandb', type=bool, default=False,
+                    help='Enables Weights and Biases tracking')
 parser.add_argument('--hidden_channels', type=int, default=64,
                     help='Number of hidden channels of graph convolution layers')
 parser.add_argument('--num_features', type=int, default=64,
@@ -49,10 +50,10 @@ parser.add_argument('--num_features', type=int, default=64,
                
 args = parser.parse_args()
 
-# Use GPU if available
+# Use GPU if available and requested
 if args.cuda and torch.cuda.is_available():
     device = torch.device("cuda")
-    if args.horovod:
+    if args.horovod: # Initialize horovod if requested
         import horovod.torch as hvd
         hvd.init()
         torch.cuda.set_device(hvd.local_rank())
@@ -66,8 +67,6 @@ elif args.dataset == 'right':
     raise NotImplementedError
 elif args.dataset == 'both':
     raise NotImplementedError
-
-dataset = dataset[0:100]
 
 # Split dataset into two: one for training the model and one for testing it
 train_dataset = dataset[:int(0.85*(len(dataset)))] 
@@ -83,21 +82,23 @@ if args.model == 'gcn':
 elif args.model == 'mp':
     raise NotImplementedError
 
-if args.horovod:
-    if hvd.rank() == 0:  
+# Start wandb tracking if requested
+if args.wandb:
+    import wandb
+    if args.horovod:
+        if hvd.rank() == 0:  
+            wandb.init(project="eegcn")
+            wandb.run.name = args.exp_name
+            wandb.config.update(args, allow_val_change=True)
+            wandb.watch(model)
+    else: 
         wandb.init(project="eegcn")
         wandb.run.name = args.exp_name
         wandb.config.update(args, allow_val_change=True)
         wandb.watch(model)
-else: 
-    wandb.init(project="eegcn")
-    wandb.run.name = args.exp_name
-    wandb.config.update(args, allow_val_change=True)
-    wandb.watch(model)
    
-# Send model to GPU 
+# Send model to GPU or CPU
 model = model.double().to(device)
-#model = torch.nn.DataParallel(model)
 
 # Initialize optimizer
 if args.optimizer == 'adam':
@@ -105,6 +106,7 @@ if args.optimizer == 'adam':
 elif args.optimizer == 'sgd':
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=1e-4)
 
+# Distribute parameters across resources
 if args.horovod:
     optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters(), backward_passes_per_step=1)
     hvd.broadcast_optimizer_state(optimizer, root_rank=0)
@@ -122,27 +124,34 @@ while train_acc < 1:
     train_acc = test(model, train_loader, device)
     test_acc = test(model, test_loader, device)
     
-    if args.horovod:
-        if hvd.rank() == 0:
+    if args.wandb: 
+        if args.horovod:
+            if hvd.rank() == 0:
+                wandb.log({"Train Accuracy": train_acc, "Test Accuracy": test_acc, "Test Loss": loss, "Epoch": epoch})
+                if test_acc > best_acc:
+                    best_acc = test_acc
+                    torch.save(model.state_dict(), str(args.model) + '_' + str(args.exp_name) + '.pt')
+        else:
             wandb.log({"Train Accuracy": train_acc, "Test Accuracy": test_acc, "Test Loss": loss, "Epoch": epoch})
             if test_acc > best_acc:
                 best_acc = test_acc
                 torch.save(model.state_dict(), str(args.model) + '_' + str(args.exp_name) + '.pt')
-            if epoch%5==0:
-                print(f'Epoch: {epoch:03d}, Loss: {loss:.4f}, Train Acc: {train_acc:.4f}, Test Acc: {test_acc:.4f}')
     else:
-        wandb.log({"Train Accuracy": train_acc, "Test Accuracy": test_acc, "Test Loss": loss, "Epoch": epoch})
         if test_acc > best_acc:
             best_acc = test_acc
             torch.save(model.state_dict(), str(args.model) + '_' + str(args.exp_name) + '.pt')
         if epoch%5==0:
             print(f'Epoch: {epoch:03d}, Loss: {loss:.4f}, Train Acc: {train_acc:.4f}, Test Acc: {test_acc:.4f}')
 
+
     if args.epochs > 0 and epoch > args.epochs:
         break
-        
-if args.horovod:
-    if hvd.rank() == 0:
+
+if args.wandb:
+    if args.horovod:
+        if hvd.rank() == 0:
+            wandb.log({"Best model accuracy": best_acc})
+    else: 
         wandb.log({"Best model accuracy": best_acc})
-else: 
-    wandb.log({"Best model accuracy": best_acc})
+else:
+    print("Best model accuracy: " + str(round(best_acc,2)))
