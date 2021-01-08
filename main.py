@@ -71,8 +71,6 @@ elif args.dataset == 'right':
 elif args.dataset == 'both':
     raise NotImplementedError
     
-dataset = dataset[0:10]
-
 # Split dataset into two: one for training the model and one for testing it
 train_dataset = dataset[:int(0.85*(len(dataset)))] 
 test_dataset = dataset[int(0.85*(len(dataset))):]
