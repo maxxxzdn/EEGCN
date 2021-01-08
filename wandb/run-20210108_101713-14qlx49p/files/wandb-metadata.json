@@ -1,0 +1,27 @@
+{
+    "os": "Linux-5.8.0-26-generic-x86_64-with-glibc2.32",
+    "python": "3.8.6",
+    "heartbeatAt": "2021-01-08T09:17:14.894193",
+    "startedAt": "2021-01-08T09:17:13.836819",
+    "docker": null,
+    "cpu_count": 8,
+    "cuda": null,
+    "args": [
+        "--data",
+        "../EEG_data/train_data.pt",
+        "--wandb",
+        "1"
+    ],
+    "state": "running",
+    "codePath": "main.py",
+    "program": "main.py",
+    "git": {
+        "remote": "https://github.com/maxxxzdn/EEGCN.git",
+        "commit": "3b3005eb1d4825b236ed464cc7283d83ae1725d8"
+    },
+    "email": "maxxxzdn@gmail.com",
+    "root": "/home/maxxxzdn/CompPsy/code",
+    "host": "maxxxzdn",
+    "username": "maxxxzdn",
+    "executable": "/usr/bin/python3"
+}

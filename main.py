@@ -37,11 +37,14 @@ parser.add_argument('--lr', type=float, default=0.001,
                     help='learning rate (default: 0.001, 0.1 if using sgd)')
 parser.add_argument('--momentum', type=float, default=0.9, 
                     help='SGD momentum (default: 0.9)')
-parser.add_argument('--cuda', type=bool, default=False,
+parser.add_argument('--cuda', type=int, default=0,
+                    choices=[0, 1],
                     help='Enables CUDA training')
-parser.add_argument('--horovod', type=bool, default=False,
+parser.add_argument('--horovod', type=int, default=0,
+                    choices=[0, 1],
                     help='Enables Horovod parallelism')
-parser.add_argument('--wandb', type=bool, default=False,
+parser.add_argument('--wandb', type=int, default=0,
+                    choices=[0, 1],
                     help='Enables Weights and Biases tracking')
 parser.add_argument('--hidden_channels', type=int, default=64,
                     help='Number of hidden channels of graph convolution layers')
@@ -67,6 +70,8 @@ elif args.dataset == 'right':
     raise NotImplementedError
 elif args.dataset == 'both':
     raise NotImplementedError
+    
+dataset = dataset[0:10]
 
 # Split dataset into two: one for training the model and one for testing it
 train_dataset = dataset[:int(0.85*(len(dataset)))] 
@@ -85,13 +90,7 @@ elif args.model == 'mp':
 # Start wandb tracking if requested
 if args.wandb:
     import wandb
-    if args.horovod:
-        if hvd.rank() == 0:  
-            wandb.init(project="eegcn")
-            wandb.run.name = args.exp_name
-            wandb.config.update(args, allow_val_change=True)
-            wandb.watch(model)
-    else: 
+    if not args.horovod or (args.horovod and hvd.rank()) == 0:
         wandb.init(project="eegcn")
         wandb.run.name = args.exp_name
         wandb.config.update(args, allow_val_change=True)
@@ -122,36 +121,23 @@ epoch = 0
 while train_acc < 1:
     loss = train(model, optimizer, criterion, train_loader, epoch, device)
     train_acc = test(model, train_loader, device)
-    test_acc = test(model, test_loader, device)
-    
-    if args.wandb: 
-        if args.horovod:
-            if hvd.rank() == 0:
-                wandb.log({"Train Accuracy": train_acc, "Test Accuracy": test_acc, "Test Loss": loss, "Epoch": epoch})
-                if test_acc > best_acc:
-                    best_acc = test_acc
-                    torch.save(model.state_dict(), str(args.model) + '_' + str(args.exp_name) + '.pt')
-        else:
+    test_acc = test(model, test_loader, device)    
+    if args.wandb: # Write down train/test accuracies and loss
+        if not args.horovod or (args.horovod and hvd.rank()) == 0:
             wandb.log({"Train Accuracy": train_acc, "Test Accuracy": test_acc, "Test Loss": loss, "Epoch": epoch})
-            if test_acc > best_acc:
-                best_acc = test_acc
-                torch.save(model.state_dict(), str(args.model) + '_' + str(args.exp_name) + '.pt')
-    else:
-        if test_acc > best_acc:
+    else: 
+        if epoch%5==0:
+            print(f'Epoch: {epoch:03d}, Loss: {loss:.4f}, Train Acc: {train_acc:.4f}, Test Acc: {test_acc:.4f}')           
+    if not args.horovod or hvd.rank() == 0:
+        if test_acc > best_acc: # Save the best model and its accuracy result
             best_acc = test_acc
             torch.save(model.state_dict(), str(args.model) + '_' + str(args.exp_name) + '.pt')
-        if epoch%5==0:
-            print(f'Epoch: {epoch:03d}, Loss: {loss:.4f}, Train Acc: {train_acc:.4f}, Test Acc: {test_acc:.4f}')
+    if args.epochs > 0 and epoch > args.epochs: # If countable epoch number was given:
+        break 
 
-
-    if args.epochs > 0 and epoch > args.epochs:
-        break
-
+# Print best achieved result
 if args.wandb:
-    if args.horovod:
-        if hvd.rank() == 0:
-            wandb.log({"Best model accuracy": best_acc})
-    else: 
+    if not args.horovod or (args.horovod and hvd.rank()) == 0:
         wandb.log({"Best model accuracy": best_acc})
 else:
     print("Best model accuracy: " + str(round(best_acc,2)))
