@@ -1,0 +1,49 @@
+wandb_version: 1
+
+_wandb:
+  desc: null
+  value:
+    cli_version: 0.10.8
+    framework: torch
+    is_jupyter_run: false
+    is_kaggle_kernel: false
+    python_version: 3.8.6
+batch_size:
+  desc: null
+  value: 64
+cuda:
+  desc: null
+  value: false
+data:
+  desc: null
+  value: ../EEG_data/train_data.pt
+dataset:
+  desc: null
+  value: left
+epochs:
+  desc: null
+  value: 100
+exp_name:
+  desc: null
+  value: exp
+hidden_channels:
+  desc: null
+  value: 64
+horovod:
+  desc: null
+  value: false
+lr:
+  desc: null
+  value: 0.001
+model:
+  desc: null
+  value: gcn
+momentum:
+  desc: null
+  value: 0.9
+num_features:
+  desc: null
+  value: 64
+optimizer:
+  desc: null
+  value: adam

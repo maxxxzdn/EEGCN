@@ -1,0 +1,22 @@
+{
+    "os": "Linux-5.8.0-26-generic-x86_64-with-glibc2.32",
+    "python": "3.8.6",
+    "heartbeatAt": "2021-01-07T20:03:55.296431",
+    "startedAt": "2021-01-07T20:03:54.111158",
+    "docker": null,
+    "cpu_count": 8,
+    "cuda": null,
+    "args": [],
+    "state": "running",
+    "codePath": "main.py",
+    "program": "main.py",
+    "git": {
+        "remote": "https://github.com/maxxxzdn/EEGCN.git",
+        "commit": "b4113cf59ed1f0bc22349af9238f320d502d6e51"
+    },
+    "email": "maxxxzdn@gmail.com",
+    "root": "/home/maxxxzdn/CompPsy/code",
+    "host": "maxxxzdn",
+    "username": "maxxxzdn",
+    "executable": "/usr/bin/python3"
+}
