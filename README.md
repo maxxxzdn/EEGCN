@@ -1,5 +1,4 @@
-# EEGCN
-Classification of EEG signals into silence vs listening with Graph Neural Network (PyTorch)
+# EEGCN: Classification of EEG signals into silence vs listening with Graph Neural Network (PyTorch)
 
 **utils**: training (train) and evaluating (test) routines
 
