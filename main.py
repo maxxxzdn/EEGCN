@@ -24,8 +24,6 @@ parser.add_argument('--data', type=str, default='EEG_data/train_data.pt',
 parser.add_argument('--model', type=str, default='gcn',
                     choices=['gcn', 'mp'],
                     help='Model to use, [GCN, MP]')
-parser.add_argument('--dataset', type=str, default='left', 
-                    choices=['right', 'left', 'both'])
 parser.add_argument('--batch_size', type=int, default=64, 
                     help='Size of batch')
 parser.add_argument('--epochs', type=int, default=100,
@@ -50,6 +48,12 @@ parser.add_argument('--hidden_channels', type=int, default=64,
                     help='Number of hidden channels of graph convolution layers')
 parser.add_argument('--num_features', type=int, default=64,
                     help='Number of features to extract from a EEG signal')
+parser.add_argument('--pooling', type=str, default='avg',
+                    choices=['max', 'avg'],
+                    help='Pooling strategy to use, [Max, Average]')
+parser.add_argument('--activation', type=str, default='leaky_relu',
+                    choices=['leaky_relu', 'relu', 'tanh'],
+                    help='Activation function to use, [LeakyReLU, ReLU, Tanh]')                    
                
 args = parser.parse_args()
 
@@ -64,12 +68,7 @@ else:
     device = torch.device("cpu")
 
 # Load dataset
-if args.dataset == 'left':
-    dataset = torch.load(args.data)    
-elif args.dataset == 'right':
-    raise NotImplementedError
-elif args.dataset == 'both':
-    raise NotImplementedError
+dataset = torch.load(args.data)
     
 # Split dataset into two: one for training the model and one for testing it
 train_dataset = dataset[:int(0.85*(len(dataset)))] 
@@ -81,7 +80,7 @@ test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False
 
 # Initialize the model 
 if args.model == 'gcn':
-    model = GCN(hidden_channels=args.hidden_channels, num_features = args.num_features)
+    model = GCN(hidden_channels=args.hidden_channels, num_features = args.num_features, activation = args.activation, pooling = args.pooling)
 elif args.model == 'mp':
     raise NotImplementedError
 
