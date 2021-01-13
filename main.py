@@ -53,7 +53,14 @@ parser.add_argument('--pooling', type=str, default='avg',
                     help='Pooling strategy to use, [Max, Average]')
 parser.add_argument('--activation', type=str, default='leaky_relu',
                     choices=['leaky_relu', 'relu', 'tanh'],
-                    help='Activation function to use, [LeakyReLU, ReLU, Tanh]')                    
+                    help='Activation function to use, [LeakyReLU, ReLU, Tanh]')
+parser.add_argument('--hops', type=int, default=4,
+                    help='Hop distance in graph to collect information from, >=1')
+parser.add_argument('--layers', type=int, default=2,
+                    help='Classification layers in the model, >=1')                  
+parser.add_argument('--convs', type=int, default=3,
+                    help='Number of 1D convolutions to extract features from a signal, >=2') 
+                                       
                
 args = parser.parse_args()
 
@@ -80,7 +87,7 @@ test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False
 
 # Initialize the model 
 if args.model == 'gcn':
-    model = GCN(hidden_channels=args.hidden_channels, num_features = args.num_features, activation = args.activation, pooling = args.pooling)
+    model = GCN(hidden_channels=args.hidden_channels, num_features = args.num_features, hops = args.hops, layers = args.layers, convs = args.convs, activation = args.activation, pooling = args.pooling)
 elif args.model == 'mp':
     raise NotImplementedError
 
