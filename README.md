@@ -2,7 +2,9 @@
 Classification of EEG signals into silence vs listening with Graph Neural Network (PyTorch)
 
 utils: training (train) and evaluating (test) routines
+
 model: contain classifiers to solve the problem (torch.nn.Module classes)
+
 main: script to run, it loads dataset and performs training of a selected model on it.
 
 * Run the training script:
