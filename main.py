@@ -1,18 +1,14 @@
 import torch
 import glob
 import argparse
-
 import numpy as np
-
 from torch_geometric.data import DataLoader
 from torch_geometric.data import Data
 from torch_geometric.utils import to_networkx
-
 from torch.nn import Linear, Conv1d, MaxPool1d
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv,GraphConv
 from torch_geometric.nn import global_mean_pool, global_sort_pool, global_max_pool
-
 from model import GCN
 from utils import *
 

@@ -5,7 +5,6 @@ from torch_geometric.nn import GCNConv,GraphConv
 from torch_geometric.nn import global_mean_pool, global_max_pool
 from torch_geometric.utils import to_networkx
 
-
 class GCN(torch.nn.Module):
     def __init__(self, hidden_channels, num_features, hops = 4, layers = 2, convs = 3, activation = 'relu', pooling = "avg"):
         super(GCN, self).__init__()

@@ -6,7 +6,6 @@ from collections import defaultdict
 import networkx as nx
 from torch_geometric.utils import to_networkx
 
-
 def train(model, optimizer, criterion, train_loader, epoch, device):
     model.train() # set training mode for the model
     
@@ -22,8 +21,7 @@ def train(model, optimizer, criterion, train_loader, epoch, device):
         loss.backward()  # Derive gradients.
         optimizer.step()  # Update parameters based on gradients.
         optimizer.zero_grad()  # Clear gradients.
-        loss_all += loss.item()
-        
+        loss_all += loss.item()       
     return loss_all
 
 def test(model, loader, device):
