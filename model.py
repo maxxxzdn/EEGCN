@@ -3,6 +3,8 @@ from torch.nn import Linear, Conv1d, MaxPool1d, AvgPool1d, ModuleList
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv,GraphConv
 from torch_geometric.nn import global_mean_pool, global_max_pool
+from torch_geometric.utils import to_networkx
+
 
 class GCN(torch.nn.Module):
     def __init__(self, hidden_channels, num_features, hops = 4, layers = 2, convs = 3, activation = 'relu', pooling = "avg"):
@@ -55,10 +57,10 @@ class GCN(torch.nn.Module):
         self.linlayers = ModuleList([])
         for _ in range(self.layers-1):
             self.linlayers.append(Linear(hidden_channels, hidden_channels))
-        self.linlayers.append(Linear(hidden_channels, 2))
+        self.linlayers.append(Linear(hidden_channels, 3))
 
 
-    def forward(self, x, edge_index, batch):
+    def forward(self, x, edge_index, batch, edge_weight = None):
 
         rows = x.shape[0] # number of signals in batch = 61 * graphs in batch
         cols = x.shape[1] # length of a signal
@@ -82,7 +84,7 @@ class GCN(torch.nn.Module):
 
         # 2. Obtain node embeddings; x.shape = [61,node_features]
         for gconv in self.gconvs:
-            x = gconv(x, edge_index) #[61, hidden_channels]
+            x = gconv(x, edge_index, edge_weight) #[61, hidden_channels]
             x = self.activation(x)
    
         # 3. Readout layer
@@ -95,4 +97,4 @@ class GCN(torch.nn.Module):
             x = self.activation(x)
         x = self.linlayers[-1](x)
         
-        return x
+        return x    

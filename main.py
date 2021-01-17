@@ -14,7 +14,7 @@ from torch_geometric.nn import GCNConv,GraphConv
 from torch_geometric.nn import global_mean_pool, global_sort_pool, global_max_pool
 
 from model import GCN
-from utils import train, test
+from utils import *
 
 parser = argparse.ArgumentParser(description='EEG Signal Classification')
 parser.add_argument('--exp_name', type=str, default='exp',
@@ -31,8 +31,8 @@ parser.add_argument('--epochs', type=int, default=100,
 parser.add_argument('--optimizer', type=str, default='adam', 
                     choices=['adam', 'sgd'],
                     help='Optimizer to use, [Adam, SGD]')
-parser.add_argument('--lr', type=float, default=0.001,
-                    help='learning rate (default: 0.001, 0.1 if using sgd)')
+parser.add_argument('--lr', type=float, default=0.00005,
+                    help='learning rate (default: 5e-5, 5e-3 if using sgd)')
 parser.add_argument('--momentum', type=float, default=0.9, 
                     help='SGD momentum (default: 0.9)')
 parser.add_argument('--cuda', type=int, default=0,
@@ -53,15 +53,18 @@ parser.add_argument('--pooling', type=str, default='avg',
                     help='Pooling strategy to use, [Max, Average]')
 parser.add_argument('--activation', type=str, default='leaky_relu',
                     choices=['leaky_relu', 'relu', 'tanh'],
-                    help='Activation function to use, [LeakyReLU, ReLU, Tanh]')
+                    help='Activation function to use, [Leaky ReLU, ReLU, Tanh]')
 parser.add_argument('--hops', type=int, default=4,
                     help='Hop distance in graph to collect information from, >=1')
 parser.add_argument('--layers', type=int, default=2,
                     help='Classification layers in the model, >=1')                  
 parser.add_argument('--convs', type=int, default=3,
-                    help='Number of 1D convolutions to extract features from a signal, >=2') 
-                                       
-               
+                    help='Number of 1D convolutions to extract features from a signal, >=2')
+parser.add_argument('--explain', type=int, default=0,
+                    choices=[0,1],
+                    help='Calculate node importance using Integrated Gradients (captum)')                     
+parser.add_argument('--graph_info', type=str, default="",
+                    help='File with infomation about node labels and their positions')                                
 args = parser.parse_args()
 
 # Use GPU if available and requested
@@ -147,3 +150,10 @@ if args.wandb:
         wandb.log({"Best model accuracy": best_acc})
 else:
     print("Best model accuracy: " + str(round(best_acc,2)))
+    
+if args.explain:
+    positions = np.genfromtxt(args.graph_info)[:,0:2]
+    labels = np.genfromtxt(args.graph_info, 'str')[:,3]
+    positions = torch.tensor(positions)  
+    explain(model, dataset, positions, labels)
+
