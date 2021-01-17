@@ -150,10 +150,14 @@ if args.wandb:
         wandb.log({"Best model accuracy": best_acc})
 else:
     print("Best model accuracy: " + str(round(best_acc,2)))
-    
-if args.explain:
-    positions = np.genfromtxt(args.graph_info)[:,0:2]
-    labels = np.genfromtxt(args.graph_info, 'str')[:,3]
-    positions = torch.tensor(positions)  
-    explain(model, dataset, positions, labels)
 
+if args.explain:
+    if len(args.graph_info) > 0:
+        positions = np.genfromtxt(args.graph_info)[:,0:2]
+        labels = np.genfromtxt(args.graph_info, 'str')[:,3]
+        positions = torch.tensor(positions)
+    else: 
+        print("Graph information was not given. Nodes positions and labels will be calculated automatically")
+        positions = None
+        labels = None  
+    explain(model, dataset, positions, labels)
