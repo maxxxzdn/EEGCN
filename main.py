@@ -16,8 +16,10 @@ from utils import *
 parser = argparse.ArgumentParser(description='EEG Signal Classification')
 parser.add_argument('--exp_name', type=str, default='exp',
                     help='Name of the experiment')
-parser.add_argument('--dataset', type=str, default='EEG_data/train_data.pt',
+parser.add_argument('--train_dataset', type=str, default='EEG_data/train_data.pt',
                     help='Data to train on')
+parser.add_argument('--val_dataset', type=str, default='',
+                    help='Data to validate on')
 parser.add_argument('--model', type=str, default='gcn',
                     choices=['gcn', 'mp'],
                     help='Model to use, [GCN, MP]')
@@ -75,12 +77,16 @@ else:
     device = torch.device("cpu")
 
 # Load dataset
-dataset = torch.load(args.dataset)
-random.shuffle(dataset)
+train_dataset = torch.load(args.train_dataset)
+random.shuffle(train_dataset)
     
 # Split dataset into two: one for training the model and one for testing it
-train_dataset = dataset[:int(0.85*(len(dataset)))] 
-test_dataset = dataset[int(0.85*(len(dataset))):]
+if len(args.val_dataset) == 0:
+    train_dataset = train_dataset[:int(0.85*(len(train_dataset)))] 
+    val_dataset = train_dataset[int(0.85*(len(train_dataset))):]
+else: 
+    val_dataset = torch.load(args.val_dataset)
+    random.shuffle(val_dataset)
 
 # Investigate number of classes in dataset and length of signal
 classes = []
@@ -92,7 +98,7 @@ signal_length = data.x.shape[1]
 
 # Create batches with DataLoader
 train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
 
 # Initialize the model 
 if args.model == 'gcn':
@@ -115,9 +121,9 @@ model = model.double().to(device)
 
 # Initialize optimizer
 if args.optimizer == 'adam':
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 elif args.optimizer == 'sgd':
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=1e-4)
+    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
 
 # Distribute parameters across resources
 if args.horovod:
@@ -135,7 +141,7 @@ epoch = 1
 while train_acc < 0.99:
     loss = train(model, optimizer, criterion, train_loader, epoch, device)
     train_acc = test(model, train_loader, device)
-    test_acc = test(model, test_loader, device)    
+    test_acc = test(model, val_loader, device)    
     if args.wandb: # Write down train/test accuracies and loss
         if not args.horovod or (args.horovod and hvd.rank()) == 0:
             wandb.log({"Train Accuracy": train_acc, "Test Accuracy": test_acc, "Test Loss": loss, "Epoch": epoch})
