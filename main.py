@@ -2,6 +2,7 @@ import torch
 import glob
 import argparse
 import numpy as np
+import random
 from torch_geometric.data import DataLoader
 from torch_geometric.data import Data
 from torch_geometric.utils import to_networkx
@@ -15,7 +16,7 @@ from utils import *
 parser = argparse.ArgumentParser(description='EEG Signal Classification')
 parser.add_argument('--exp_name', type=str, default='exp',
                     help='Name of the experiment')
-parser.add_argument('--data', type=str, default='EEG_data/train_data.pt',
+parser.add_argument('--dataset', type=str, default='EEG_data/train_data.pt',
                     help='Data to train on')
 parser.add_argument('--model', type=str, default='gcn',
                     choices=['gcn', 'mp'],
@@ -50,17 +51,17 @@ parser.add_argument('--pooling', type=str, default='avg',
 parser.add_argument('--activation', type=str, default='leaky_relu',
                     choices=['leaky_relu', 'relu', 'tanh'],
                     help='Activation function to use, [Leaky ReLU, ReLU, Tanh]')
-parser.add_argument('--hops', type=int, default=4,
+parser.add_argument('--hops', type=int, default=8,
                     help='Hop distance in graph to collect information from, >=1')
-parser.add_argument('--layers', type=int, default=2,
+parser.add_argument('--layers', type=int, default=4,
                     help='Classification layers in the model, >=1')                  
-parser.add_argument('--convs', type=int, default=3,
+parser.add_argument('--convs', type=int, default=5,
                     help='Number of 1D convolutions to extract features from a signal, >=2')
 parser.add_argument('--explain', type=int, default=0,
                     choices=[0,1],
                     help='Calculate node importance using Integrated Gradients (captum)')                     
 parser.add_argument('--graph_info', type=str, default="",
-                    help='File with infomation about node labels and their positions')                                
+                    help='File with infomation about node labels and their positions')                               
 args = parser.parse_args()
 
 # Use GPU if available and requested
@@ -74,11 +75,20 @@ else:
     device = torch.device("cpu")
 
 # Load dataset
-dataset = torch.load(args.data)
+dataset = torch.load(args.dataset)
+random.shuffle(dataset)
     
 # Split dataset into two: one for training the model and one for testing it
 train_dataset = dataset[:int(0.85*(len(dataset)))] 
 test_dataset = dataset[int(0.85*(len(dataset))):]
+
+# Investigate number of classes in dataset and length of signal
+classes = []
+for data in train_dataset[:100]:
+    if data.y.item() not in classes:
+        classes.append(data.y.item())
+n_classes = len(classes)
+signal_length = data.x.shape[1]
 
 # Create batches with DataLoader
 train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
@@ -86,7 +96,7 @@ test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False
 
 # Initialize the model 
 if args.model == 'gcn':
-    model = GCN(hidden_channels=args.hidden_channels, num_features = args.num_features, hops = args.hops, layers = args.layers, convs = args.convs, activation = args.activation, pooling = args.pooling)
+    model = GCN(hidden_channels=args.hidden_channels, num_features = args.num_features, n_classes = n_classes, signal_length = signal_length, hops = args.hops, layers = args.layers, convs = args.convs, activation = args.activation, pooling = args.pooling)
 elif args.model == 'mp':
     raise NotImplementedError
 
@@ -97,6 +107,7 @@ if args.wandb:
         wandb.init(project="eegcn")
         wandb.run.name = args.exp_name
         wandb.config.update(args, allow_val_change=True)
+        wandb.config.update({"n_classes": n_classes, "signal_length": signal_length})
         wandb.watch(model)
    
 # Send model to GPU or CPU
@@ -134,6 +145,8 @@ while train_acc < 0.99:
     if not args.horovod or hvd.rank() == 0:
         if test_acc > best_acc: # Save the best model and its accuracy result
             best_acc = test_acc
+            if args.wandb:
+                wandb.log({"Best model accuracy": best_acc})
             torch.save(model.state_dict(), str(args.model) + '_' + str(args.exp_name) + '.pt')
     if args.epochs > 0 and epoch > args.epochs: # If countable epoch number was given:
         break 
@@ -146,7 +159,8 @@ if args.wandb:
         wandb.log({"Best model accuracy": best_acc})
 else:
     print("Best model accuracy: " + str(round(best_acc,2)))
-
+    
+# Explain graph network predictions using integrated gradients if requested
 if args.explain:
     if len(args.graph_info) > 0:
         positions = np.genfromtxt(args.graph_info)[:,0:2]
