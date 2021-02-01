@@ -8,6 +8,6 @@
 
 * Run the training script:
 ``` 
-python main.py --hidden_channels 200 --num_features 50 --epochs 150 --exp_name exp --data EEG_data/train_data.pt --lr 1e-4 --activation relu --pooling avg
+python main.py --hidden_channels 128 --num_features 64 --epochs 300 --exp_name exp --data EEG_data/train_data.pt --lr 1e-4 --activation leaky_relu --pooling avg
 ```
 
