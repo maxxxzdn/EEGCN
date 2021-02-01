@@ -1,12 +1,13 @@
 import torch
 from torch.nn import Linear, Conv1d, MaxPool1d, AvgPool1d, ModuleList
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv,GraphConv
+from torch_geometric.nn import GCNConv,GraphConv, GATConv
 from torch_geometric.nn import global_mean_pool, global_max_pool
 from torch_geometric.utils import to_networkx
+from torch.nn import Linear, Conv1d, MaxPool1d, AvgPool1d, ModuleList, Sequential, ReLU, Dropout, BatchNorm1d
 
 class GCN(torch.nn.Module):
-    def __init__(self, hidden_channels, num_features, n_classes, signal_length, hops = 8, layers = 4, convs = 5, activation = 'relu', pooling = "avg"):
+    def __init__(self, hidden_channels, num_features, n_classes, graph_operator, hops = 8, layers = 6, convs = 4, activation = 'relu', pooling = "avg"):
         super(GCN, self).__init__()
         torch.manual_seed(12345)
         
@@ -17,17 +18,21 @@ class GCN(torch.nn.Module):
         
         self.hops = hops
         self.layers = layers
-        self.convs = convs      
+        self.convs = convs
         self.n_classes = n_classes
-        self.signal_length = signal_length
         self.num_features = num_features
         self.activation = activation
-        
-        # Check if architecture requsted is suitable for data given
-        if (self.num_features*((self.signal_length - 1)//2**(self.convs+1)+1) < 1):
-            print("Signal is not long enough for the architecture")
-            raise RuntimeError
-        
+
+        # Graph operator choice
+        if graph_operator == 'GCNConv':
+            self.graph_operator = GCNConv
+        elif graph_operator == 'GraphConv':
+            self.graph_operator = GraphConv
+        elif graph_operator == 'GATConv':
+            self.graph_operator = GATConv
+        else: 
+            raise NotImplementedError  
+
         # Activation function choice
         if activation == 'leaky_relu':
         	self.activation = F.leaky_relu
@@ -37,24 +42,23 @@ class GCN(torch.nn.Module):
                 self.activation = F.tanh
         else: 
             raise NotImplementedError
-        
+            
         # Pooling strategy choice
         if pooling == "max":
-            self.pooling = MaxPool1d(kernel_size = 3, stride = 2, padding = 1)
+            self.pooling = MaxPool1d(kernel_size = 7)
             self.graphPooling = global_max_pool
         elif pooling == "avg":
-            self.pooling = AvgPool1d(kernel_size = 3, stride = 2, padding = 1)
+            self.pooling = AvgPool1d(kernel_size = 7)
             self.graphPooling = global_mean_pool
         else:
             raise NotImplementedError
                     
-        # 1D Convolutions to extract features from a signal            
+        # 1D Convolutions to extract features from a signal                    
         self.convs1d = ModuleList([])
-        self.convs1d.append(Conv1d(in_channels = 1, out_channels = self.num_features, kernel_size = 7, stride = 2, padding = 3))
+        self.convs1d.append(Conv1d(in_channels = 1, out_channels = self.num_features, kernel_size = 7))
         for _ in range(self.convs-2):
-            self.convs1d.append(Conv1d(in_channels = self.num_features, out_channels = self.num_features, kernel_size = 5, padding = 2, stride = 2))
-        self.convs1d.append(Conv1d(in_channels = self.num_features, out_channels = self.num_features, kernel_size = 3, stride = 2, padding = 1))
-        self.linear = Linear(self.num_features*((self.signal_length - 1)//2**(self.convs+1)+1), self.num_features)
+            self.convs1d.append(Conv1d(in_channels = self.num_features, out_channels = self.num_features, kernel_size = 5, padding = 2))
+        self.convs1d.append(Conv1d(in_channels = self.num_features, out_channels = self.num_features, kernel_size = 3))
         
         # Graph Convolution Networks
         self.gconvs = ModuleList([])
@@ -77,19 +81,25 @@ class GCN(torch.nn.Module):
         # 1. Extract features from time series
         x = self.convs1d[0](x)
         x = self.activation(x)
-        x = F.dropout(x, p=0.5, training=self.training)      
-        for conv1d in self.convs1d[1:]:
+        x = self.pooling(x)
+        x = F.dropout(x, p=0.25, training = self.training)
+        
+        for conv1d in self.convs1d[1:-1]:
             x = conv1d(x)
             x = self.activation(x)
-        x = F.dropout(x, p=0.5, training=self.training)
+            x = F.dropout(x, p=0.25, training = self.training)
+            
         x = self.pooling(x)
-        x = x.view(rows,-1)
-        x = self.linear(x)
+        x = F.dropout(x, p=0.25, training = self.training)
+        x = self.convs1d[-1](x)
+        x = x.squeeze()
 
         # 2. Obtain node embeddings; x.shape = [61,node_features]
-        for gconv in self.gconvs:
+        for gconv in self.gconvs[:-1]:
             x = gconv(x, edge_index, edge_weight) #[61, hidden_channels]
             x = self.activation(x)
+            x = F.dropout(x, p=0.25, training = self.training)
+        x = self.gconvs[-1](x, edge_index, edge_weight)
    
         # 3. Readout layer
         x = self.graphPooling(x, batch)  # [batch_size, hidden_channels]
@@ -101,4 +111,4 @@ class GCN(torch.nn.Module):
             x = self.activation(x)
         x = self.linlayers[-1](x)
         
-        return F.log_softmax(x, -1)    
+        return F.softmax(x, -1) 

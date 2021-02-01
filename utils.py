@@ -6,6 +6,9 @@ from collections import defaultdict
 import networkx as nx
 from torch_geometric.utils import to_networkx
 
+"""
+Functions to train and estimate a model
+"""
 def train(model, optimizer, criterion, train_loader, epoch, device):
     model.train() # set training mode for the model
     
@@ -30,36 +33,41 @@ def test(model, loader, device):
     correct = 0
     for data in loader:  # Iterate in batches over the training/test dataset.
         data = data.to(device)
-        out = model(data.x, data.edge_index, data.batch)  
+        out = model(data.x, data.edge_index, data.batch)
         pred = out.argmax(dim=1)  # Use the class with highest probability.
         correct += int((pred == data.y).sum())  # Check against ground-truth labels.
     return correct / len(loader.dataset)  # Derive ratio of correct predictions.
-    
+
 """
 Functions to calculate node importance using Integrated Gradients [captum]
 """
 
 # Main function that returns graph visualization with node importances depicted with node color and size    
-def explain(model, dataset, positions, labels):
-    names = ['None', 'Right', 'Left'] # labels presented in dataset
-    ultimate_mask = np.zeros((3, 184)) # 3 x number of edges 
-    node_mask_dict = [] 
+def explain(model, dataset, positions, labels, names):
+   # labels presented in dataset
+    nEdges = dataset[0].edge_index.shape[1]
+    ultimate_mask = np.zeros((len(names), nEdges)) # 3 x number of edges 
+    edge_mask_dict = [] 
     for data in dataset:
         label = data.y.item() 
         edge_mask = explain_edges(model = model, data = data, target=label) # calculate edge importances for the given graph
         ultimate_mask[label] += edge_mask # summarize importances of edges across all the data
-    for label in range(3): # for each node aggregate importances of ongoing edges
-        node_mask_dict.append(aggregate_node_info(ultimate_mask[label], data.edge_index))
+    for label in range(len(names)): # for each node aggregate importances of ongoing edges
+        edge_mask_dict.append(aggregate_edge_directions(ultimate_mask[label], data.edge_index))
     
     # upload info about graph for nice plot                  
     data.pos = positions 
-    data.labels = labels	 
+    data.labels = labels
     G = to_networkx(data, to_undirected=True)
          
-    for label in range(3): # for each label visualize result and save it in home directory
-        visualize_node(G, data, node_mask_dict[label], 100, 
+    for label in range(len(names)): # for each label visualize result and save it in home directory
+        for i in range(nEdges):
+            if max(edge_mask_dict[label].values()) > 0:
+                edge_mask_dict[label][i] = edge_mask_dict[label][i]/max(edge_mask_dict[label].values()) 
+        visualize_edge(G, data, edge_mask_dict[label], 10, 
                  'Signal: ' + str(names[label]) + '; Node importance; method: Integrated Gradients')       
         plt.savefig(str(label) + ".png")
+    return edge_mask_dict
         
 # To modify forward function for using with captum IntegratedGradients       
 def model_forward(edge_mask, data, model):
@@ -76,19 +84,17 @@ def explain_edges(model, data, target=0):
                             internal_batch_size=data.edge_index.shape[1])
     edge_mask = np.abs(mask.cpu().detach().numpy()) 
     return edge_mask
-
-# To aggregate importance for each node from its outgoing edges           
-def aggregate_node_info(node_mask, edge_index):
-    node_mask_dict = defaultdict(float) # dictionary storing importance for each node
-    num_edges = defaultdict(float) # dictionary storing amount of outgoing edges for each node
-    for val, u, v in list(zip(node_mask, *edge_index)): 
-        u = u.item()
-        node_mask_dict[u] += val # add importance of outgoing edge
-        num_edges[u] += 1 # one more outgoing edge
-    for u in range(61):
-        node_mask_dict[u] = node_mask_dict[u]/num_edges[u] # calculate mean
-    return node_mask_dict
     
+# To aggregate importance for each edge from its both directions          
+def aggregate_edge_directions(edge_mask, edge_index):
+    edge_mask_dict = defaultdict(float) # dictionary storing importance for each edges
+    for val, u, v in list(zip(edge_mask, *edge_index)):
+        u, v = u.item(), v.item() # vertex indices
+        if u > v:
+            u, v = v, u # to make it undirected
+        edge_mask_dict[(u, v)] += val
+    return edge_mask_dict
+
 """
 Functions to visualize graph using networkx
 """ 
@@ -109,17 +115,18 @@ def labels_to_dict(labels):
     
 # Main function to visualize a graph
 # Input: networkx.Graph, graph data, node importance, size coefficient to tune node size, title of the plot
-# Output: graph visualization (matplotlib.pyplot)    
-def visualize_node(h, data, node_mask = None, coefSize = 250, title = None):
-    plt.figure(figsize=(7,7))
+# Output: graph visualization (matplotlib.pyplot)  
+        
+def visualize_edge(h, data, edge_mask = None, coefSize = 1000, title = None):
+    plt.figure(figsize=(14,14))
     plt.xticks([])
     plt.yticks([])
-    if node_mask is None:
-        node_size = 0
+    if edge_mask is None:
+        edge_size = 0
         widths = None
     else: # convert dictionary to lists
-        node_size = [coefSize*node_mask[u]/max(node_mask.values()) for u in h.nodes()] 
-        node_color = [node_mask[u]/max(node_mask.values()) for u in h.nodes()]
+        edge_width = [coefSize*edge_mask[(u, v)]/max(edge_mask.values()) for u, v in h.edges()] 
+        edge_color = [edge_mask[(u, v)]/max(edge_mask.values()) for u, v in h.edges()]
     if data.pos is not None:
         pos = pos_to_dict(data.pos) # node positions if given
     else: 
@@ -128,6 +135,6 @@ def visualize_node(h, data, node_mask = None, coefSize = 250, title = None):
         labels = labels_to_dict(data.labels) # labels of nodes if given
     else: 
         labels = None # Just numbers otherwise
-    nx.draw_networkx(h, pos=pos, labels = labels, node_size = node_size, node_color = node_color, cmap="Reds")
+    nx.draw_networkx(h, pos=pos, labels = labels, width=edge_width, node_size = 0, edge_color = edge_color, edge_cmap=plt.cm.Blues, cmap = 'Set2')
     if title:
         plt.title(title)

@@ -8,10 +8,10 @@ from torch_geometric.data import Data
 from torch_geometric.utils import to_networkx
 from torch.nn import Linear, Conv1d, MaxPool1d
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv,GraphConv
+from torch_geometric.nn import GCNConv,GraphConv, GATConv
 from torch_geometric.nn import global_mean_pool, global_sort_pool, global_max_pool
 from model import GCN
-from utils import *
+from utils import train, test, distance, edgeCreator
 
 parser = argparse.ArgumentParser(description='EEG Signal Classification')
 parser.add_argument('--exp_name', type=str, default='exp',
@@ -23,7 +23,10 @@ parser.add_argument('--val_dataset', type=str, default='',
 parser.add_argument('--model', type=str, default='gcn',
                     choices=['gcn', 'mp'],
                     help='Model to use, [GCN, MP]')
-parser.add_argument('--batch_size', type=int, default=64, 
+parser.add_argument('--graph_operator', type=str, default='GraphConv',
+                    choices=['GCNConv', 'GraphConv', 'GATConv'],
+                    help='Model to use, [GCN, MP]')
+parser.add_argument('--batch_size', type=int, default=32, 
                     help='Size of batch')
 parser.add_argument('--epochs', type=int, default=100,
                     help='Number of epochs to train. 0 leads to training until reaching train accuracy = 1.')
@@ -34,6 +37,8 @@ parser.add_argument('--lr', type=float, default=0.00005,
                     help='learning rate (default: 5e-5, 5e-3 if using sgd)')
 parser.add_argument('--momentum', type=float, default=0.9, 
                     help='SGD momentum (default: 0.9)')
+parser.add_argument('--weight_decay', type=float, default=1e-4,
+                    help='Weight decay value for an optimizer')
 parser.add_argument('--cuda', type=int, default=0,
                     choices=[0, 1],
                     help='Enables CUDA training')
@@ -63,7 +68,7 @@ parser.add_argument('--explain', type=int, default=0,
                     choices=[0,1],
                     help='Calculate node importance using Integrated Gradients (captum)')                     
 parser.add_argument('--graph_info', type=str, default="",
-                    help='File with infomation about node labels and their positions')                               
+                    help='File with infomation about node labels and their positions')
 args = parser.parse_args()
 
 # Use GPU if available and requested
@@ -96,13 +101,26 @@ for data in train_dataset[:100]:
 n_classes = len(classes)
 signal_length = data.x.shape[1]
 
+# Add graph information to data
+positions = np.genfromtxt(args.graph_info)[:,0:3]
+labels = np.genfromtxt(args.graph_info, 'str')[:,3]
+positions = torch.tensor(positions)
+
+edge_index = np.loadtxt('./EEG_data/edge_index3.txt')
+edge_index = torch.tensor(edge_index).long()
+
+for data in train_dataset:
+    data.edge_index = edge_index
+for data in val_dataset:
+    data.edge_index = edge_index
+    
 # Create batches with DataLoader
 train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
 
 # Initialize the model 
 if args.model == 'gcn':
-    model = GCN(hidden_channels=args.hidden_channels, num_features = args.num_features, n_classes = n_classes, signal_length = signal_length, hops = args.hops, layers = args.layers, convs = args.convs, activation = args.activation, pooling = args.pooling)
+    model = GCN(hidden_channels=args.hidden_channels, num_features = args.num_features, n_classes = n_classes, graph_operator = args.graph_operator, hops = args.hops, layers = args.layers, convs = args.convs, activation = args.activation, pooling = args.pooling)
 elif args.model == 'mp':
     raise NotImplementedError
 
@@ -113,7 +131,7 @@ if args.wandb:
         wandb.init(project="eegcn")
         wandb.run.name = args.exp_name
         wandb.config.update(args, allow_val_change=True)
-        wandb.config.update({"n_classes": n_classes, "signal_length": signal_length})
+        wandb.config.update({"n_classes": n_classes})
         wandb.watch(model)
    
 # Send model to GPU or CPU
@@ -168,12 +186,6 @@ else:
     
 # Explain graph network predictions using integrated gradients if requested
 if args.explain:
-    if len(args.graph_info) > 0:
-        positions = np.genfromtxt(args.graph_info)[:,0:2]
-        labels = np.genfromtxt(args.graph_info, 'str')[:,3]
-        positions = torch.tensor(positions)
-    else: 
-        print("Graph information was not given. Nodes positions and labels will be calculated automatically")
-        positions = None
-        labels = None  
+    from utils import *
+    positions = positions[:,:2]
     explain(model, dataset, positions, labels)
