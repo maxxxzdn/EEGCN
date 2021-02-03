@@ -2,12 +2,12 @@
 
 **utils**: training (train) and evaluating (test) routines
 
-**model**: contain classifiers to solve the problem (torch.nn.Module classes)
+**model**: contains the model
 
-**main**: script to run, it loads dataset and performs training of a selected model on it.
+**main**: script to run, it creates dataset and performs training of the model on it.
 
 * Run the training script:
 ``` 
-python main.py --hidden_channels 128 --num_features 64 --epochs 300 --exp_name exp --data EEG_data/train_data.pt --lr 1e-4 --activation leaky_relu --pooling avg
+python3 main.py --graph_info ../EEG_data/edge_index3.txt --hops 1
 ```
 
