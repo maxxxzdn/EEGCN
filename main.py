@@ -13,6 +13,7 @@ parser.add_argument('--exp_name', type=str, default='exp',
                     help='Name of the experiment')
 parser.add_argument('--epochs', type=int, default=100,
                     help='Number of epochs to train. 0 leads to training until reaching train accuracy = 1.')
+parser.add_argument('--path_data', type=str, default='../EEG_data/*')
 parser.add_argument('--optimizer', type=str, default='adam',
                     choices=['adam', 'sgd'],
                     help='Optimizer to use, [Adam, SGD]')
@@ -28,20 +29,16 @@ parser.add_argument('--cuda', type=int, default=0,
 parser.add_argument('--wandb', type=int, default=0,
                     choices=[0, 1],
                     help='Enables Weights and Biases tracking')
-
 parser.add_argument('--num_features', type=int, default=9)
 parser.add_argument('--hidden_size_node', type=int, default=10)
 parser.add_argument('--hidden_size_glob', type=int, default=10)
 parser.add_argument('--out_size_glob', type=int, default=10)
 parser.add_argument('--out_size', type=int, default=5)
 parser.add_argument('--hidden_size', type=int, default=10)
-
-parser.add_argument('--hops', type=int, default=8,
+parser.add_argument('--hops', type=int, default=4,
                     help='Hop distance in graph to collect information from, >=1')
-
 parser.add_argument('--graph_info', type=str, default="",
                     help='File with infomation about node labels and their positions')
-
 args = parser.parse_args()
 
 # Use GPU if available and requested
@@ -51,7 +48,7 @@ else:
     device = torch.device("cpu")
 
 # Load dataset
-experiments = list(glob.glob('../EEG_data/Control/High/Control/Left/00015/*'))
+experiments = list(glob.glob(args.path_data))
 edge_index = np.loadtxt(args.graph_info)
 edge_index = torch.tensor(edge_index).long()
 
@@ -110,7 +107,7 @@ while train_acc < 0.99:
                    "Validation Accuracy": val_acc,
                    "Validation Loss": loss,
                    "Train MSE": MSE_train,
-                   "Validation MSE": MSE_val
+                   "Validation MSE": MSE_val,
                    "Epoch": epoch})
     else:
         if epoch % 1 == 0:
