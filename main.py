@@ -78,7 +78,6 @@ if args.wandb:
     wandb.init(project="eegcn")
     wandb.run.name = args.exp_name
     wandb.config.update(args, allow_val_change=True)
-    wandb.config.update({"n_classes": n_classes})
     wandb.watch(model)
 
 # Send model to GPU or CPU
@@ -105,18 +104,20 @@ epoch = 1
 while train_acc < 0.99:
     loss = train(model, optimizer, train_dataset, device)
     MSE_train, train_acc = test(model, train_dataset, device)
-    MSE_val, test_acc = test(model, val_dataset, device)
-    if args.wandb:  # Write down train/test accuracies and loss
+    MSE_val, val_acc = test(model, val_dataset, device)
+    if args.wandb:  # Write down train/val accuracies, MSE values and loss
         wandb.log({"Train Accuracy": train_acc,
-                   "Test Accuracy": test_acc,
-                   "Test Loss": loss,
+                   "Validation Accuracy": val_acc,
+                   "Validation Loss": loss,
+                   "Train MSE": MSE_train,
+                   "Validation MSE": MSE_val
                    "Epoch": epoch})
     else:
         if epoch % 1 == 0:
             print(
-                f'Epoch: {epoch:03d}, Loss: {loss:.4f}, Train Acc: {train_acc:.4f}, Test Acc: {test_acc:.4f}, MSE Train: {MSE_train:.4f}, MSE Val: {MSE_val:.4f}')
-        if test_acc > best_acc:  # Save the best model and its accuracy result
-            best_acc = test_acc
+                f'Epoch: {epoch:03d}, Loss: {loss:.4f}, Train Acc: {train_acc:.4f}, Validation Acc: {val_acc:.4f}, MSE Train: {MSE_train:.4f}, MSE Val: {MSE_val:.4f}')
+        if val_acc > best_acc:  # Save the best model and its accuracy result
+            best_acc = val_acc
             if args.wandb:
                 wandb.log({"Best model accuracy": best_acc})
     # If countable epoch number was given:
