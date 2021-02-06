@@ -1,84 +1,121 @@
-import torch
 import torch.nn.functional as F
 
-"""
-Functions to train and estimate a model
-"""
+# Functions to train and estimate the Euler model
 
 
-def my_loss(x_predicted, x_exact): #, u_predicted, u_exact):
-    #l1 = F.cross_entropy(u_predicted, u_exact)
-    l2 = F.mse_loss(x_predicted, x_exact)
-    return l2 #l1 + l2
+def train(model, optimizer, dataset, device):
+    """Function to train the Euler model on a dataset.
+    It trains the model on each pair from the dataset one single time.
+    For each pair it calculates the loss and performs the optimizer step.
 
+    Args:
+        model: An instance of Pipeline class.
+        optimizer: Pytorch torch.optim algorithm.
+        dataset: List of lists containing two torch_geometric.data.Data objects
+        device: torch.device object
 
-def train(model, optimizer, train_dataset, device):
-    model.train()  # set training mode for the model
+    Returns:
+        loss value calculated on the whole dataset.
+    """
+    model.train()
     model.encoder.eval()
     loss_all = 0
-    for pair in train_dataset:  # Iterate in batches over the training dataset.
+    for pair in dataset:
         current, next_ = pair
         current = current.to(device)
         next_ = next_.to(device)
-        # Perform a single forward pass.
         update_x = model(
             next_.x, next_.edge_index, next_.u, next_.batch)
         x_predicted = update_x + model.encoder(next_.x).detach()
         x_exact = model.encoder(current.x).detach()
-        # Compute the loss.
-        loss = my_loss(x_predicted, x_exact) #, diagnosis, current.y)
-        loss.backward()  # Derive gradients.
-        optimizer.step()  # Update parameters based on gradients.
-        optimizer.zero_grad()  # Clear gradients.
+        loss = F.mse_loss(x_predicted, x_exact)
+        loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
         loss_all += loss.item()
     return loss_all
 
 
 def test(model, dataset, device):
-    model.eval()  # set evaluation mode for the model
+    """Function to test a model on a dataset.
+    It calculates mean square error between estimated current state and correct one.
 
-    correct = 0
-    MSE = 0
+    Args:
+        model: An instance of Pipeline class.
+        dataset: List of lists containing two torch_geometric.data.Data objects
+        device: torch.device object
 
-    for pair in dataset:  # Iterate in batches over the training dataset.
+    Returns:
+        Total MSE: sum of MSE values calculated for each pair of consequent states in the dataset.
+    """
+    model.eval()
+
+    mse = 0
+
+    for pair in dataset:
         current, next_ = pair
         current = current.to(device)
         next_ = next_.to(device)
-        # Perform a single forward pass.
+
         update_x = model(
             next_.x, next_.edge_index, next_.u, next_.batch)
         x_predicted = update_x + model.encoder(next_.x)
         x_exact = model.encoder(current.x)
-        #pred = diagnosis.argmax(dim=1)
-        #correct += int(pred == next_.y)
-        MSE += F.mse_loss(x_predicted, x_exact)
-    return MSE #, correct / len(dataset)  # Derive ratio of correct predictions.
+        mse += F.mse_loss(x_predicted, x_exact)
 
-def cl_train(model, optimizer, criterion, train_loader, epoch, device):
-    model.train() # set training mode for the model
-    
-    if epoch % 100 == 0 and optimizer.param_groups[0]['lr'] > 1e-6:
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = 0.5 * param_group['lr']
-            
+    return mse
+
+# Functions to train and estimate a classifier for the Euler model
+
+
+def classifier_train(model, optimizer, criterion, loader, device):
+    """Function to train a classification model on a loader.
+    It trains the model on mini-batches provided by the loader.
+    For each mini-batch it calculates the loss and performs the optimizer step.
+
+    Args:
+        model: classifier attribute of an instance of Pipeline class.
+        optimizer: Pytorch torch.optim algorithm.
+        criterion: torch.nn criterion
+        loader: torch_geometric.data.DataLoader object containing graphs
+        device: torch.device object
+
+    Returns:
+        loss value calculated on the whole loader.
+    """
+    model.train()
+
     loss_all = 0
-    for data in train_loader:  # Iterate in batches over the training dataset.
+    for data in loader:
         data = data.to(device)
-        out = model(data.x, data.edge_index, data.batch)  # Perform a single forward pass.
-        loss = criterion(out, data.y)  # Compute the loss.
-        loss.backward()  # Derive gradients.
-        optimizer.step()  # Update parameters based on gradients.
-        optimizer.zero_grad()  # Clear gradients.
-        loss_all += loss.item()       
+
+        out = model(data.x, data.edge_index, data.batch)
+        loss = criterion(out, data.y)
+        loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+        loss_all += loss.item()
     return loss_all
 
-def cl_test(model, loader, device):
-    model.eval() # set evaluation mode for the model
+
+def classifier_test(model, loader, device):
+    """Function to test a classification model on a loader.
+    It calculates accuracy of the model prediction on the whole loader.
+
+    Args:
+        model: An instance of Pipeline class.
+        loader: torch_geometric.data.DataLoader object containing graphs
+        device: torch.device object
+
+    Returns:
+        percentage of correct predictions
+    """
+    model.eval()
 
     correct = 0
-    for data in loader:  # Iterate in batches over the training/test dataset.
+    for data in loader:
         data = data.to(device)
         out = model(data.x, data.edge_index, data.batch)
-        pred = out.argmax(dim=1)  # Use the class with highest probability.
-        correct += int((pred == data.y).sum())  # Check against ground-truth labels.
-    return correct / len(loader.dataset)  # Derive ratio of correct predictions.
+        pred = out.argmax(dim=1)
+        correct += int((pred == data.y).sum())
+    return correct / len(loader.dataset)

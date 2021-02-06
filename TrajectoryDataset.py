@@ -19,7 +19,7 @@ class TrajectoryDataset(Dataset):
         else:
             raise NotImplementedError
         return history
-    
+
     @staticmethod
     def side(experiment):
         if experiment.split('/')[4] == 'Left':
@@ -56,8 +56,8 @@ class TrajectoryDataset(Dataset):
 
             label = self.diagnosis(experiment)
             side = self.side(experiment)
-            
-            if label == 0 and random.randint(0,3) == 0:
+
+            if label == 0 and random.randint(0, 3) == 0:
                 continue
 
             for current, next_ in list(zip([0, 200], [200, 400])):
@@ -67,7 +67,7 @@ class TrajectoryDataset(Dataset):
                 x_current = torch.tensor(ascii_grid[:, current:next_]).double()
                 x_next = torch.tensor(
                     ascii_grid[:, next_:next_ + 200]).double()
-                
+
                 u_current = self.history(current)
                 u_current.append(side)
                 u_current = torch.tensor(u_current).double().reshape(
@@ -95,7 +95,7 @@ class TrajectoryDataset(Dataset):
                         batch=batch,
                         edge_index=edge_index)]
                 self.pairs.append(pair)
-                
+
         random.shuffle(self.pairs)
 
     def __len__(self):
