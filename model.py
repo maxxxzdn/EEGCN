@@ -1,232 +1,256 @@
 import torch
+import torch.nn.functional as F
 from torch.nn import Linear, Conv1d, MaxPool1d, AvgPool1d, ModuleList
-from torch_geometric.nn import MetaLayer
-from torch.nn import Linear, Conv1d, MaxPool1d, AvgPool1d, ModuleList, Sequential, Softmax, ReLU, Dropout, BatchNorm1d, ReLU
-from torch_scatter import scatter_mean
+from torch_geometric.nn import GraphConv, global_mean_pool
+from torch.nn import Linear, Conv1d, MaxPool1d, AvgPool1d, ModuleList, Sequential, Softmax, ReLU, Dropout, BatchNorm1d
 
+class Encoder(torch.nn.Module):
+    def __init__(self, num_features, convs = 4):
+        super(Encoder, self).__init__()
+        torch.manual_seed(12345)
+        
+        self.num_features = num_features
+        self.convs = convs
+        self.activation = F.relu
+        self.pooling = AvgPool1d(kernel_size = 7)
+        
+        self.encoder = ModuleList([])
+        self.encoder.append(Conv1d(in_channels = 1, out_channels = self.num_features, kernel_size = 7))
+        for _ in range(self.convs-2):
+            self.encoder.append(Conv1d(in_channels = self.num_features, out_channels = self.num_features, kernel_size = 5, padding = 2))
+        self.encoder.append(Conv1d(in_channels = self.num_features, out_channels = self.num_features, kernel_size = 3))
+        
+    def forward(self,x):
+        
+        rows = x.shape[0] # number of signals in batch = 61 * graphs in batch
+        cols = x.shape[1] # length of a signal
+        x = x.reshape(rows,1,cols) # reshape to 1 channel
 
-class NodeModel(torch.nn.Module):
-    def __init__(self, num_features, hidden_size, u_size):
-        super(NodeModel, self).__init__()
-        self.node_mlp_1 = Sequential(
-            Linear(
-                num_features, hidden_size), ReLU(), Linear(
-                hidden_size, hidden_size))
-        self.node_mlp_2 = Sequential(
-            Linear(
-                num_features +
-                hidden_size +
-                u_size,
-                hidden_size),
-            ReLU(),
-            Linear(
-                hidden_size,
-                num_features))
+        # 1. Extract features from time series
+        x = self.encoder[0](x)
+        x = self.activation(x)
+        x = self.pooling(x)
+        x = F.dropout(x, p=0.25, training = self.training)
+        
+        for conv1d in self.encoder[1:-1]:
+            x = conv1d(x)
+            x = self.activation(x)
+            x = F.dropout(x, p=0.25, training = self.training)
+            
+        x = self.pooling(x)
+        x = F.dropout(x, p=0.25, training = self.training)
+        x = self.encoder[-1](x)
+        x = x.squeeze()
+        
+        return x
 
-    def forward(self, x, edge_index, u, batch, edge_attr=None):
-        # x: [N, F_x], where N is the number of nodes.
-        # edge_index: [2, E] with max entry N - 1.
-        # edge_attr: [E, F_e]
-        # u: [B, F_u]
-        # batch: [N] with max entry B - 1.
-        row, col = edge_index
-        out = x[row]  # torch.cat([x[row], edge_attr], dim=1)
-        out = self.node_mlp_1(out)
-        out = scatter_mean(out, col, dim=0, dim_size=x.size(0))
-        # torch.cat([x, out], dim=1) #torch.cat([x, out, u[batch]], dim=1)
-        out = torch.cat([x, out, u[batch]], dim=1)
-        return self.node_mlp_2(out)
+class Classifier(torch.nn.Module):
+    def __init__(self, num_features, hidden_channels, n_classes = 3, hops = 8, layers = 6, convs = 4):
+        super(Classifier, self).__init__()
+        torch.manual_seed(12345)
+        
+        # check if architecture requested is meaningful
+        assert hops > 0
+        assert layers > 0
+        assert convs > 1
+        
+        self.hops = hops
+        self.layers = layers
+        self.convs = convs
+        self.n_classes = n_classes
+        self.num_features = num_features
+        self.graph_operator = GraphConv
+        self.activation = F.relu
+        self.pooling = AvgPool1d(kernel_size = 7)
+        self.graphPooling = global_mean_pool
 
+        # 1D Convolutions to extract features from a signal                    
+        self.encoder = Encoder(self.num_features, self.convs)
+        
+        # Graph Convolution Networks
+        self.gconvs = ModuleList([])
+        self.gconvs.append(GraphConv(self.num_features, hidden_channels))
+        for _ in range(self.hops-1):
+            self.gconvs.append(GraphConv(hidden_channels, hidden_channels))
+	
+	# Linear layers to make a prediction  
+        self.linlayers = ModuleList([])
+        for _ in range(self.layers-1):
+            self.linlayers.append(Linear(hidden_channels, hidden_channels))
+        self.linlayers.append(Linear(hidden_channels, self.n_classes))
 
-class GlobalModel(torch.nn.Module):
-    def __init__(self, num_features, hidden_size, out_size, u_size):
-        super(GlobalModel, self).__init__()
-        self.global_mlp = Sequential(
-            Linear(
-                num_features +
-                u_size,
-                hidden_size),
-            ReLU(),
-            Linear(
-                hidden_size,
-                out_size))
+    def forward(self, x, edge_index, batch, edge_weight = None):
 
-    def forward(self, x, edge_index, u, batch, edge_attr=None):
-        # x: [N, F_x], where N is the number of nodes.
-        # edge_index: [2, E] with max entry N - 1.
-        # edge_attr: [E, F_e]
-        # u: [B, F_u]
-        # batch: [N] with max entry B - 1.
-        out = torch.cat([u, scatter_mean(x, batch, dim=0)], dim=1)
-        return self.global_mlp(out)
+        x = self.encoder(x)
+        # 2. Obtain node embeddings; x.shape = [61,node_features]
+        for gconv in self.gconvs[:-1]:
+            x = gconv(x, edge_index, edge_weight) #[61, hidden_channels]
+            x = self.activation(x)
+            x = F.dropout(x, p=0.25, training = self.training)
+        x = self.gconvs[-1](x, edge_index, edge_weight)
+   
+        # 3. Readout layer
+        x = self.graphPooling(x, batch)  # [batch_size, hidden_channels]
 
+        # 4. Apply a final classifier
+        x = F.dropout(x, p=0.5, training=self.training)
+        for linlayer in self.linlayers[:-1]:
+            x = linlayer(x)
+            x = self.activation(x)
+        x = self.linlayers[-1](x)
+        
+        return F.softmax(x, -1) 
 
+"""    
 class Encoder(torch.nn.Module):
     def __init__(self, num_features):
         super(Encoder, self).__init__()
         torch.manual_seed(12345)
-
+        
         assert num_features >= 6
-
+        
         self.activation = ReLU()
-        self.pooling = AvgPool1d(kernel_size=7)
-
+        self.pooling = AvgPool1d(kernel_size = 7)
+        
         # check if architecture requested is meaningful
-        self.num_features = (num_features // 3) * 3
-        channels = self.num_features // 3
-
+        self.num_features = (num_features//3)*3                
+        channels = self.num_features//3
+                    
         # 1D Convolutions to extract features from a signal
+        
         self.hf_encoder = Sequential(
-            Conv1d(1, channels, 3, 2, 1),
-            self.activation,
-            Dropout(0.25),
-            Conv1d(channels, channels, 3, 2, 1),
-            self.activation,
-            Dropout(0.25),
-            Conv1d(channels, channels, 3, 2, 1),
-            self.activation,
-            Dropout(0.25),
-            Conv1d(channels, channels, 3, 2, 1),
-            self.pooling
+                          Conv1d(1, channels, 3, 2, 1),
+                          self.activation,
+                          Dropout(0.25),
+                          Conv1d(channels, channels, 3, 2, 1),
+                          self.activation,
+                          Dropout(0.25),
+                          Conv1d(channels, channels, 3, 2, 1),
+                          self.activation,
+                          Dropout(0.25),
+                          Conv1d(channels, channels, 3, 2, 1),
+                          self.activation,
+                          Dropout(0.25),
+                          Conv1d(channels, channels, 3, 2, 1),
+                          self.pooling
         )
-
+        
         self.mf_encoder = Sequential(
-            Conv1d(1, channels, 7, 2, 3),
-            self.activation,
-            Dropout(0.25),
-            Conv1d(channels, channels, 7, 2, 3),
-            self.activation,
-            Dropout(0.25),
-            Conv1d(channels, channels, 7, 2, 3),
-            self.activation,
-            Dropout(0.25),
-            Conv1d(channels, channels, 7, 2, 3),
-            self.pooling
+                          Conv1d(1, channels, 7, 2, 3),
+                          self.activation,
+                          Dropout(0.25),
+                          Conv1d(channels, channels, 7, 2, 3),
+                          self.activation,
+                          Dropout(0.25),
+                          Conv1d(channels, channels, 7, 2, 3),
+                          self.activation,
+                          Dropout(0.25),
+                          Conv1d(channels, channels, 7, 2, 3),
+                          self.activation,
+                          Dropout(0.25),
+                          Conv1d(channels, channels, 7, 2, 3),
+                          self.pooling
         )
-
+        
         self.lf_encoder = Sequential(
-            Conv1d(1, channels, 11, 2, 5),
-            self.activation,
-            Dropout(0.25),
-            Conv1d(channels, channels, 11, 2, 5),
-            self.activation,
-            Dropout(0.25),
-            Conv1d(channels, channels, 11, 2, 5),
-            self.activation,
-            Dropout(0.25),
-            Conv1d(channels, channels, 11, 2, 5),
-            self.pooling
+                          Conv1d(1, channels, 11, 2, 5),
+                          self.activation,
+                          Dropout(0.25),
+                          Conv1d(channels, channels, 11, 2, 5),
+                          self.activation,
+                          Dropout(0.25),
+                          Conv1d(channels, channels, 11, 2, 5),
+                          self.activation,
+                          Dropout(0.25),
+                          Conv1d(channels, channels, 11, 2, 5),
+                          self.activation,
+                          Dropout(0.25),
+                          Conv1d(channels, channels, 11, 2, 5),
+                          self.pooling
         )
-
+        
     def forward(self, x):
 
-        rows = x.shape[0]  # number of signals in batch = 61 * graphs in batch
-        cols = x.shape[1]  # length of a signal
-        x = x.reshape(rows, 1, cols)  # reshape to 1 channel
+        rows = x.shape[0] # number of signals in batch = 61 * graphs in batch
+        cols = x.shape[1] # length of a signal
+        x = x.reshape(rows,1,cols) # reshape to 1 channel
 
         # 1. Extract features from time series
         x1 = self.hf_encoder(x).squeeze()
         x2 = self.mf_encoder(x).squeeze()
         x3 = self.lf_encoder(x).squeeze()
-
-        x = torch.cat([x1, x2, x3], 1)
+        
+        x = torch.cat([x1,x2,x3],1)
 
         return x
-
+"""
 
 class Decoder(torch.nn.Module):
-    def __init__(self, num_features_node, num_features_global, hidden_size):
+    def __init__(self, num_features, hidden_size, out_size):
         super(Decoder, self).__init__()
         torch.manual_seed(12345)
-
+        
         self.activation = ReLU()
-
-        # 1D Convolutions to extract features from a signal
-        self.classifier = Sequential(Linear(num_features_global, hidden_size),
+                                   
+        # 1D Convolutions to extract features from a signal                    
+        #self.classifier = Sequential(Linear(num_features_global, hidden_size), 
+        #                             self.activation,
+        #                             Linear(hidden_size, hidden_size),
+        #                             self.activation,
+        #                             Linear(hidden_size, 3),
+        #                             Softmax(dim=-1)
+        #                             )
+        self.decoder = Sequential(Linear(num_features, hidden_size), 
                                      self.activation,
                                      Linear(hidden_size, hidden_size),
                                      self.activation,
-                                     Linear(hidden_size, 3),
-                                     Softmax(dim=-1)
+                                     Linear(hidden_size, out_size)
                                      )
-        self.decoder = Sequential(Linear(num_features_node, hidden_size),
-                                  self.activation,
-                                  Linear(hidden_size, hidden_size),
-                                  self.activation,
-                                  Linear(hidden_size, num_features_node)
-                                  )
 
-    def forward(self, x, u):
+    def forward(self, x): #, u):
 
         x = self.decoder(x)
-        u = self.classifier(u)
-
-        return x, u
-
-
+        #u = self.classifier(u)
+        
+        return x #,u
+    
 class Processor(torch.nn.Module):
-    def __init__(self, hops, num_features, hidden_size_node,
-                 hidden_size_glob, out_size, u_size):
+    def __init__(self, hops, num_features, hidden_channels):
         super(Processor, self).__init__()
         torch.manual_seed(12345)
-
+        
         self.hops = hops
-
+        self.num_features = num_features+3
+        self.hidden_channels = hidden_channels
+        
         self.processor = ModuleList([])
-        self.processor.append(
-            MetaLayer(
-                None,
-                NodeModel(
-                    num_features,
-                    hidden_size_node,
-                    u_size),
-                GlobalModel(
-                    num_features,
-                    hidden_size_glob,
-                    out_size,
-                    u_size)))
-        for _ in range(hops):
-            self.processor.append(
-                MetaLayer(
-                    None,
-                    NodeModel(
-                        num_features,
-                        hidden_size_node,
-                        out_size),
-                    GlobalModel(
-                        num_features,
-                        hidden_size_glob,
-                        out_size,
-                        out_size)))
-
+        self.processor.append(GraphConv(self.num_features, self.hidden_channels))
+        for _ in range(self.hops-1):
+            self.processor.append(GraphConv(self.hidden_channels, self.hidden_channels))
+        
     def forward(self, x, edge_index, u, batch):
-
-        for op in self.processor:
-            x, _, u = op(x, edge_index, u, batch)
-
-        return x, u
-
+        
+        x = torch.cat([x, u[batch]], dim = 1)
+            
+        for gconv in self.processor:
+            x = gconv(x, edge_index)
+            
+        return x
 
 class Pipeline(torch.nn.Module):
-    def __init__(self, hops, num_features, hidden_size_node,
-                 hidden_size_glob, out_size, u_size, hidden_size):
+    def __init__(self, hops, num_features, hidden_size):
         super(Pipeline, self).__init__()
         torch.manual_seed(12345)
-
-        self.encoder = Encoder(num_features)
-        self.processor = Processor(
-            hops,
-            num_features,
-            hidden_size_node,
-            hidden_size_glob,
-            out_size,
-            u_size)
-        self.decoder = Decoder(num_features, out_size, hidden_size)
-
+        
+        self.classifier = Classifier(num_features, hidden_size)
+        self.encoder = self.classifier.encoder.eval()
+        self.processor = Processor(hops, num_features, hidden_size)
+        self.decoder = Decoder(hidden_size, hidden_size, num_features)
+        
     def forward(self, x, edge_index, u, batch):
-
+            
         x = self.encoder(x)
-        x, u = self.processor(x, edge_index, u, batch)
-        x, u = self.decoder(x, u)
+        x = self.processor(x, edge_index, u, batch) 
+        x = self.decoder(x)
 
-        return x, u
+        return x
