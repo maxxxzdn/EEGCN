@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 def train(model, optimizer, dataset, device):
     """Function to train the Euler model on a dataset.
-    It trains the model on each pair from the dataset one single time.
+    It trains the model on each pair of consequent states from the dataset one single time.
     For each pair it calculates the loss and performs the optimizer step.
 
     Args:
@@ -17,17 +17,21 @@ def train(model, optimizer, dataset, device):
     Returns:
         loss value calculated on the whole dataset.
     """
+
     model.train()
-    model.encoder.eval()
+    model.encoder.eval()  # Make the model encoder deterministic
+
     loss_all = 0
     for pair in dataset:
         current, next_ = pair
         current = current.to(device)
         next_ = next_.to(device)
+
         update_x = model(
             next_.x, next_.edge_index, next_.u, next_.batch)
         x_predicted = update_x + model.encoder(next_.x).detach()
         x_exact = model.encoder(current.x).detach()
+
         loss = F.mse_loss(x_predicted, x_exact)
         loss.backward()
         optimizer.step()
@@ -51,7 +55,6 @@ def test(model, dataset, device):
     model.eval()
 
     mse = 0
-
     for pair in dataset:
         current, next_ = pair
         current = current.to(device)
@@ -90,6 +93,7 @@ def classifier_train(model, optimizer, criterion, loader, device):
         data = data.to(device)
 
         out = model(data.x, data.edge_index, data.batch)
+
         loss = criterion(out, data.y)
         loss.backward()
         optimizer.step()
@@ -100,7 +104,7 @@ def classifier_train(model, optimizer, criterion, loader, device):
 
 def classifier_test(model, loader, device):
     """Function to test a classification model on a loader.
-    It calculates accuracy of the model prediction on the whole loader.
+    It calculates accuracy of the model prediction on the whole loader .
 
     Args:
         model: An instance of Pipeline class.
@@ -115,7 +119,9 @@ def classifier_test(model, loader, device):
     correct = 0
     for data in loader:
         data = data.to(device)
+
         out = model(data.x, data.edge_index, data.batch)
+
         pred = out.argmax(dim=1)
         correct += int((pred == data.y).sum())
     return correct / len(loader.dataset)
