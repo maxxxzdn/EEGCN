@@ -1,181 +1,163 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GraphConv, GATConv, ChebConv
-from torch_geometric.nn import global_mean_pool, global_max_pool
-from torch_geometric.utils import to_networkx
-from torch.nn import Linear, Conv1d, MaxPool1d, AvgPool1d, ModuleList, Dropout, BatchNorm1d, CosineSimilarity, Parameter
-from utils import corr2_coeff, init_weights
-from my_conv import MyzConv, GraphConvBias
+from torch_geometric.nn import GraphConv
 
-class MLP(torch.nn.Module):
-    def __init__(self):
-        super(MLP, self).__init__()
+
+class Encoder(torch.nn.Module):
+    """Takes a signal and produces a latent vector.
+    Args:
+        inp_dim (int): length of the signal.
+        enc_dim (int): size of the hidden layer.
+        latent_dim (int): dimension of the latent space.
+    Returns:
+        Latent representation of a signal.
+    """
+
+    def __init__(self, inp_dim, enc_dim, latent_dim):
+        super(Encoder, self).__init__()
+        self.fc1 = nn.Linear(inp_dim, enc_dim)
+        self.fc2 = nn.Linear(enc_dim, enc_dim)
+        self.fc3 = nn.Linear(enc_dim, enc_dim)
+        self.fc4 = nn.Linear(enc_dim, latent_dim)
+
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        x = self.fc4(x)
+        return x
+
+
+class Decoder(torch.nn.Module):
+    """Takes a latent vector and produces a signal.
+    Args:
+        latent_dim (int): dimension of the latent space.
+        enc_dim (int): size of the hidden layer.
+        inp_dim (int): length of the signal.
+    Returns:
+        Reconstruction of the signal from its latent space representation.
+    """
+
+    def __init__(self, latent_dim, enc_dim, inp_dim):
+        super(Decoder, self).__init__()
+        self.fc1 = nn.Linear(latent_dim, enc_dim)
+        self.fc2 = nn.Linear(enc_dim, enc_dim)
+        self.fc3 = nn.Linear(enc_dim, enc_dim)
+        self.fc4 = nn.Linear(enc_dim, inp_dim)
+
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        x = self.fc4(x)
+        return x
+
+
+class AE(torch.nn.Module):
+    """ Takes an image and produces an image reconstructed from its latent space representation.
+    Args:
+        inp_dim (int): length of the signal.
+        enc_dim (int): size of the hidden layer.
+        latent_dim (int): dimension of the latent space.
+    Returns:
+        Reconstruction of the signal from its latent space representation.
+    """
+
+    def __init__(self, inp_dim, enc_dim, latent_dim):
+        super(AE, self).__init__()
+        self.encoder = Encoder(inp_dim, enc_dim, latent_dim)
+        self.decoder = Decoder(latent_dim, enc_dim, inp_dim)
+
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.decoder(x)
+        return x
+
+
+class Processor(torch.nn.Module):
+    """ Performs N message passing steps to gather information all over a graph.
+    Args:
+        hops (int): number of message passing steps
+        feature_dim (int): length of a feature vector.
+        latent_dim_proc (int): dimension of the latent space of graph networks.
+        latent_dim (int): dimension of the latent space.
+        activation (torch.nn.functional): activation function.
+    Returns:
+        Updated latent representation of the graph.
+    """
+
+    def __init__(self, hops, feature_dim, latent_dim_proc,
+                 latent_dim, activation=F.relu):
+        super(Processor, self).__init__()
         torch.manual_seed(12345)
+        self.activation = activation
+        self.processor = nn.ModuleList([])
+        self.processor.append(
+            GraphConv(
+                feature_dim,
+                latent_dim_proc))
+        for _ in range(hops - 1):
+            self.processor.append(
+                GraphConv(
+                    latent_dim_proc,
+                    latent_dim_proc))
 
-        self.layers= ModuleList([])
-        self.layers.append(Linear(61*200, 1000))
-        self.layers.append(Linear(1000, 256))
-        for _ in range(4):
-            self.layers.append(Linear(256, 256))
-        self.layers.append(Linear(256, 6))
+        self.processor.append(
+            GraphConv(
+                latent_dim_proc,
+                latent_dim))
 
-    def forward(self, x, edge_index, batch):
-        x = x.reshape((batch.max().item()+1),-1)     
-        for layer in self.layers[:-1]:
-            x = layer(x)
-            x = F.relu(x)
-        x = self.layers[-1](x)    
-        return F.log_softmax(x, -1) 
-
-class CNN_MLP(torch.nn.Module):
-    def __init__(self):
-        super(CNN_MLP, self).__init__()
-        torch.manual_seed(12345)
-        self.activation = F.relu
-        self.pooling = AvgPool1d(kernel_size = 7)
-        self.convs1d = ModuleList([])
-        self.convs1d.append(Conv1d(in_channels = 1, out_channels = 128, kernel_size = 7))
-        for _ in range(2):
-            self.convs1d.append(Conv1d(in_channels = 128, out_channels = 128, kernel_size = 5, padding = 2))
-        self.convs1d.append(Conv1d(in_channels = 128, out_channels = 128, kernel_size = 3))
-
-        self.layers = ModuleList([])
-        self.layers.append(Linear(61*128, 256))
-        for _ in range(2):
-            self.layers.append(Linear(256, 256))
-        self.layers.append(Linear(256, 6))
-
-    def forward(self, x, edge_index, batch):
-
-        rows = x.shape[0] # number of signals in batch = 61 * graphs in batch
-        cols = x.shape[1] # length of a signal
-        x = x.reshape(rows,1,cols) # reshape to 1 channel
-
-        x = self.convs1d[0](x)
-        x = self.activation(x)
-        x = self.pooling(x)
-        x = F.dropout(x, p=0.25, training = self.training)
-        
-        for conv1d in self.convs1d[1:-1]:
-            x = conv1d(x)
+    def forward(self, x, edge_index, edge_weight=None):
+        for gconv in self.processor[:-1]:
+            x = gconv(x, edge_index, edge_weight)
             x = self.activation(x)
-            x = F.dropout(x, p=0.25, training = self.training)
-            
-        x = self.pooling(x)
-        x = F.dropout(x, p=0.25, training = self.training)
-        x = self.convs1d[-1](x)
-        x = x.squeeze()
-
-        x = x.reshape((batch.max().item()+1),-1)     
-        for layer in self.layers[:-1]:
-            x = layer(x)
-            x = F.relu(x)
-        x = self.layers[-1](x)    
-        return F.log_softmax(x, -1) 
+        x = self.processor[-1](x, edge_index, edge_weight)
+        return x
 
 
-class GCN(torch.nn.Module):
-    def __init__(self, hidden_channels, num_features, n_classes, hops, layers, convs, pooling, aggr, corr, device):
-        super(GCN, self).__init__()
+class Pipeline(torch.nn.Module):
+    """ Encodes a graph in embedded space and gather information all over a graph.
+    Args:
+        hops (int): number of message passing steps
+        feature_dim (int): length of a feature vector.
+        inp_dim (int): length of the signal.
+        enc_dim (int): size of the hidden layer.
+        latent_dim (int): dimension of the latent space.
+        latent_dim_proc (int): dimension of the latent space of graph networks.
+        activation (torch.nn.functional): activation function.
+    Returns:
+        Updated latent representation of the graph.
+    """
+
+    def __init__(self, hops, feature_dim, inp_dim, enc_dim,
+                 latent_dim, latent_dim_proc):
+        super(Pipeline, self).__init__()
         torch.manual_seed(12345)
-        
-        # check if architecture requested is meaningful
-        assert hops > 0
-        assert layers > 0
-        assert convs > 1
-        assert aggr in ['max', 'add']
-        
         self.hops = hops
-        self.layers = layers
-        self.convs = convs
-        self.n_classes = n_classes
-        self.num_features = num_features
-        self.hidden_channels = hidden_channels
-        self.activation = F.relu
-        self.gconv = MyzConv #GraphConvBias
-        self.aggr = aggr
-        self.corr = corr
-        
-        #self.node_bias = Parameter(torch.tensor(61*[-10.], requires_grad=True, device = device).reshape(-1,1))
-      
-        if pooling == "max":
-            self.pooling = MaxPool1d(kernel_size = 7)
-            self.graphPooling = global_max_pool
-        elif pooling == "avg":
-            self.pooling = AvgPool1d(kernel_size = 7)
-            self.graphPooling = global_mean_pool
-        else:
-            raise NotImplementedError          
-                    
-        # 1D Convolutions to extract features from a signal                    
-        self.convs1d = ModuleList([])
-        self.convs1d.append(Conv1d(in_channels = 1, out_channels = self.num_features, kernel_size = 7))
-        for _ in range(self.convs-2):
-            self.convs1d.append(Conv1d(in_channels = self.num_features, out_channels = self.num_features, kernel_size = 5, padding = 2))
-        self.convs1d.append(Conv1d(in_channels = self.num_features, out_channels = self.num_features, kernel_size = 3)) 
-               
-        self.bn1 = BatchNorm1d(self.num_features)
-                    
-        # Graph Convolution Networks   
-        self.gconvs = ModuleList([])
-        self.gconvs.append(self.gconv(self.num_features, self.hidden_channels, aggr = self.aggr))
-        for _ in range(self.hops-1):
-            self.gconvs.append(self.gconv(self.hidden_channels, self.hidden_channels, aggr = self.aggr))
-            
-        self.bn2 = BatchNorm1d(self.hidden_channels)
-                
-        # Linear layers to make a prediction  
-        self.linlayers = ModuleList([])
-        self.linlayers.append(Linear(61*self.hidden_channels, self.hidden_channels))
-        for _ in range(self.layers-2):
-            self.linlayers.append(Linear(self.hidden_channels, self.hidden_channels))
-        self.linlayers.append(Linear(self.hidden_channels, self.n_classes))     
-        
+        self.latent_dim = latent_dim
+        self.latent_dim_proc = latent_dim_proc
+        self.autoencoder = AE(inp_dim, enc_dim, latent_dim)
+        self.encoder = self.autoencoder.encoder
+        self.decoder = self.autoencoder.decoder
+        self.processor = Processor(
+            hops, feature_dim, latent_dim_proc, latent_dim)
 
-    def forward(self, x, edge_index, batch):
-        
-        edge_weight = None
-        if self.corr:      
-            x_j = x[edge_index[0]]
-            x_i = x[edge_index[1]]
-            edge_weight = 1 - corr2_coeff(x_j, x_i).abs()
+    def forward(self, x, edge_index, u, batch, positions, edge_weight=None):
+        x = self.encoder(x)
+        # Concatenate positions and global features to a feature vector
+        x = torch.cat([x, positions, u[batch]], 1)
+        x = self.processor(x, edge_index, edge_weight)
+        return x
 
-        rows = x.shape[0] # number of signals in batch = 61 * graphs in batch
-        cols = x.shape[1] # length of a signal
-        x = x.reshape(rows,1,cols) # reshape to 1 channel
-
-        # 1. Extract features from time series
-        x = self.convs1d[0](x)
-        x = self.activation(x)
-        x = self.pooling(x)
-        
-        for conv1d in self.convs1d[1:-1]:
-            x = conv1d(x)
-            x = self.activation(x)
-            
-        x = self.pooling(x)
-        x = self.convs1d[-1](x)
-        x = x.squeeze()
-
-        x = self.bn1(x)
-        x = F.dropout(x, p=0.33, training = self.training)
-
-        # 2. Obtain node embeddings; x.shape = [61,node_features]
-        for gconv in self.gconvs[:-1]:
-            x = gconv(x = x, edge_index = edge_index, edge_weight = edge_weight) #[61, hidden_channels]
-            x = self.activation(x)
-        x = self.gconvs[-1](x = x, edge_index = edge_index, edge_weight = edge_weight)
-   
-        x = self.bn2(x)
-        x = self.activation(x)
-        # 3. Readout layer
-        x = x.reshape((batch.max().item()+1),-1)
-        
-        # 4. Apply a final classifier
-        x = F.dropout(x, p=0.33, training=self.training)
-        for linlayer in self.linlayers[:-1]:
-            x = linlayer(x)
-            x = self.activation(x)
-        x = self.linlayers[-1](x)
-        
-        return F.log_softmax(x, -1) 
+    def get_autoencoder(self, autoencoder, feature_dim):
+        """ Assigns new autoencoder for the model."""
+        self.autoencoder = autoencoder
+        self.encoder = autoencoder.encoder
+        self.decoder = autoencoder.decoder
+        self.latent_dim = autoencoder.latent_dim
+        self.processor = Processor(
+            self.hops,
+            feature_dim,
+            self.latent_dim,
+            self.latent_dim_proc)
