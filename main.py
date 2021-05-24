@@ -98,16 +98,47 @@ signal_length = data.x.shape[1]
 # Add graph information to data
 positions = np.genfromtxt(args.graph_info)[:,0:3]
 positions = torch.tensor(positions)
-
+"""
+edge_index = [[],[]]
+for i in range(61):
+    for j in range(61):
+        edge_index[0].append(i)
+        edge_index[1].append(j)
+"""
 edge_index = np.loadtxt(args.edge_index)
 edge_index = torch.tensor(edge_index).long()
 
 for data in train_dataset:
     data.edge_index = edge_index
     data.positions = positions
+    
+    indices = (edge_index[0], edge_index[1])   # col indices
+    x = [data.x.cpu().detach().numpy()]
+    con_flat = spectral_connectivity(x, method='imcoh', indices=indices, verbose = False)
+    con_flat = np.abs(con_flat[0]).mean(1)
+    con_flat = torch.tensor(con_flat).double().reshape(1,-1)
+
+    dist = torch.linalg.norm(positions[edge_index[0]]-positions[edge_index[1]],2, 1).reshape(1,-1)
+    de = (1/2*torch.log(2*np.pi*np.exp(1)*data.x.var(1)**2))
+    dasm = (torch.abs(de[edge_index[0]] - de[edge_index[1]])).reshape(1,-1).double()
+
+    data.edge_features = torch.cat((dist, con_flat, dasm),0).T
+    
 for data in val_dataset:
     data.edge_index = edge_index
     data.positions = positions
+    
+    indices = (edge_index[0], edge_index[1])   # col indices
+    x = [data.x.cpu().detach().numpy()]
+    con_flat = spectral_connectivity(x, method='imcoh', indices=indices, verbose = False)
+    con_flat = np.abs(con_flat[0]).mean(1)
+    con_flat = torch.tensor(con_flat).double().reshape(1,-1)
+
+    dist = torch.linalg.norm(positions[edge_index[0]]-positions[edge_index[1]],2, 1).reshape(1,-1)
+    de = (1/2*torch.log(2*np.pi*np.exp(1)*data.x.var(1)**2))
+    dasm = (torch.abs(de[edge_index[0]] - de[edge_index[1]])).reshape(1,-1).double()
+
+    data.edge_features = torch.cat((dist, con_flat, dasm),0).T
 
 # Create batches with DataLoader
 train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
@@ -133,14 +164,9 @@ if args.wandb:
    
 # Send model to GPU or CPU
 model = model.double().to(device)
-
-my_list = ['node_bias']
-params = list(map(lambda x: x[1],list(filter(lambda kv: kv[0] in my_list, model.named_parameters()))))
-base_params = list(map(lambda x: x[1],list(filter(lambda kv: kv[0] not in my_list, model.named_parameters()))))
-
 # Initialize optimizer
 if args.optimizer == 'adam':
-    optimizer = torch.optim.Adam([{'params': base_params, 'lr': args.lr}, {'params': params, 'lr': args.lr}])
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 elif args.optimizer == 'sgd':
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
 
@@ -157,10 +183,12 @@ train_acc = 0
 best_acc = 0
 epoch = 1
 
-while train_acc < 0.9999:
+while train_acc < 0.99:
     loss = train(model, optimizer, criterion, train_loader, epoch, device)
     train_acc = test(model, train_loader, device)
     test_acc = test(model, val_loader, device) 
+    
+    """
     if epoch%5==0:
         for label in range(n_classes):
             my_dataset = [data for data in val_dataset if data.y.item() == (label)]
@@ -170,7 +198,7 @@ while train_acc < 0.9999:
             if args.wandb: # Write down train/test accuracies and loss
                 if not args.horovod or (args.horovod and hvd.rank()) == 0:
                     wandb.log({str(label) + " Accuracy": label_acc, "Epoch": epoch})
-
+    """
    
     if args.wandb: # Write down train/test accuracies and loss
         if not args.horovod or (args.horovod and hvd.rank()) == 0:
