@@ -4,10 +4,10 @@
 
 **model**: contain classifiers to solve the problem (torch.nn.Module classes)
 
-**main**: script to run, it loads dataset and performs training of a selected model on it.
+**main**: script to run, it loads dataset and performs training of the model on it.
 
 * Run the training script:
 ``` 
-python main.py --hidden_channels 128 --num_features 64 --epochs 300 --exp_name exp --data EEG_data/train_data.pt --lr 1e-4 --activation leaky_relu --pooling avg
+python main.py --wandb 0 --exp_name 16 --epochs 100 --num_features 32 --batch_size 16 --hops 4 --autoencoder 'conv' --kernel_size 13
 ```
 
