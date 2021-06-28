@@ -177,12 +177,13 @@ class AdjConv(MessagePassing):
         self.adjs = adj_power(adj, n_hops, False).unsqueeze(0)
 
     def forward(self, x, adj_weight):
-        adj_weight = torch.mul(adj_power_batch(
-            adj_weight, self.n_hops, True), self.adjs)
+        adj_weight = adj_power_batch(
+            adj_weight, self.n_hops, True)/ self.adjs
         edge_index_all, edge_weight_all = torch.empty(2, 0).to(
             x.device).long(), torch.empty(0).to(x.device)
         for i in range(self.n_hops):
             edge_index, edge_weight = batch_dense_to_sparse(adj_weight[:, i])
+            #edge_index, edge_weight = remove_self_loops(edge_index, edge_weight)
             edge_index_all = torch.cat([edge_index_all, edge_index], 1)
             edge_weight_all = torch.cat([edge_weight_all, edge_weight], 0)
         return self.layer(self.propagate(edge_index_all, x=x, edge_weight=edge_weight_all)) + x
@@ -212,7 +213,6 @@ class Processor(nn.Module):
 
 ### ATTENTION ###
 
-
 class AdjacencyAttention(nn.Module):
     "Attention operator to calculate adjacency matrix from the data."
 
@@ -221,23 +221,17 @@ class AdjacencyAttention(nn.Module):
         super(AdjacencyAttention, self).__init__()
         self.n_nodes = n_nodes
         self.d_input = d_input
-        self._W1 = nn.Parameter(torch.FloatTensor(1))
-        self._W2 = nn.Parameter(torch.FloatTensor(d_input, 1))
-        self._W3 = nn.Parameter(torch.FloatTensor(d_input))
-        self._bs = nn.Parameter(torch.FloatTensor(1, n_nodes, n_nodes))
-        self._Vs = nn.Parameter(torch.FloatTensor(n_nodes, n_nodes))
         self.dropout = nn.Dropout(p_dropout)
+        self.linear = nn.Linear(d_input*2,1)
 
     def forward(self, x, mask=None):
         "Making a forward pass of the spatial attention layer."
-        x = x.view(-1, self.n_nodes, self.d_input, 1)
-        LHS = self.dropout(torch.matmul(torch.matmul(x, self._W1), self._W2))
-        RHS = self.dropout(torch.matmul(self._W3, x).transpose(-1, -2))
-        s = torch.matmul(self._Vs, torch.tanh(
-            torch.matmul(LHS, RHS) + self._bs))
-        if mask is not None:
-            s = s.masked_fill(mask == 0, -1e9)
-        return self.dropout(F.softmax(s.reshape(x.size(0), -1), dim=-1)).view(-1, self.n_nodes, self.n_nodes)
+        x = x.view(-1, self.n_nodes, self.d_input)        
+        a = -1e9*torch.ones(x.size(0), self.n_nodes, self.n_nodes, dtype = x.dtype).to(x.device)  
+        x = x[:,torch.nonzero(mask, as_tuple = False)].reshape(x.size(0),-1,2*self.d_input)
+        adj = self.linear(x).squeeze()
+        a[torch.nonzero(mask.unsqueeze(0).repeat(x.size(0),1,1), as_tuple=True)] = adj.view(-1)
+        return self.dropout(F.softmax(a.reshape(x.size(0), -1), dim=-1)).view(-1, self.n_nodes, self.n_nodes)
 
 ### UTILS ###
 
@@ -300,13 +294,15 @@ class LayerNorm(nn.Module):
         return (y - self.b_2)*(std + self.eps)/self.a_2 + mean
 
 
-def distance_mask(positions, threshold=1., skip_diag=True):
+def distance_mask(positions, threshold=1., skip_diag=True, triangle=False):
     "Mask nodes that are located far away from each other."
     dist_mat = torch.cdist(positions, positions)
     mask = torch.zeros(positions.size(
         0), positions.size(0)).to(dist_mat.device)
     mask = mask.masked_fill(dist_mat > threshold, 0)
     mask = mask.masked_fill(dist_mat < threshold, 1.)
+    if triangle:
+        mask = torch.triu(mask, diagonal=1)
     if skip_diag:
         mask = mask.fill_diagonal_(0)
     return mask
@@ -316,8 +312,9 @@ def adj_power(adj, n_hops, weight):
     assert adj.size(-1) == adj.size(-2)
     out = torch.empty(n_hops, adj.size(-1), adj.size(-1)).to(adj.device)
     for i in range(n_hops):
-        out[i] = adj if weight else (adj == 1.).double()
-        adj = torch.matmul(adj, adj)
+        adj = adj*(1 - torch.eye(adj.size(-1), adj.size(-1), dtype = adj.dtype).to(adj.device))
+        out[i] = adj if weight else adj.masked_fill(adj==0,1)
+        adj = torch.matmul(adj,adj)
     return out
 
 
