@@ -6,8 +6,10 @@
 
 **main**: script to run, it loads dataset and performs training of the model on it.
 
+**baselines**: baseline models (EEGNet and ShallowNet)
+
 * Run the training script:
 ``` 
-python main.py --wandb 0 --exp_name 16 --epochs 100 --num_features 32 --batch_size 16 --hops 4 --autoencoder 'conv' --kernel_size 13
+python main.py --wandb 1 --key 0 --model GCN --epochs 300 --n_cnn 3 --n_mp 1 --d_latent 32 --d_hidden 64 --kernel_size 31 --p_dropout 0.4 --norm_proc batch
 ```
 
